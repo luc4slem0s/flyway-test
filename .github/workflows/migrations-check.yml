@@ -1,0 +1,50 @@
+name: Check Flyway Migration Versions
+
+on:
+  pull_request_target:
+    branches:
+      - main
+    paths:
+      - "flyway/migrations/**.sql"
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+jobs:
+  check-duplicate-migrations:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch code
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0  # Fetch full history to allow branch comparisons
+
+      - name: Enable sparse-checkout
+        run: |
+          git sparse-checkout init --cone
+          git sparse-checkout set flyway/migrations
+
+      - name: Update the main branch
+        run: git fetch origin main
+
+      - name: Checkout only the flyway directory from main
+        run: |
+          # Once sparse-checkout is done, this checkout will actually copy the contents
+          # of the flyway directory into the feature branch instead of changing the actual
+          # working branch to the main branch
+          git checkout origin/main -- flyway
+
+      - name: Find Duplicate Flyway Migration Versions
+        working-directory: flyway/migrations
+        run: |
+            # Extract duplicated versions
+            duplicated=$(ls | grep -Eo 'V[0-9]+' | uniq -d)
+
+            if [ -n "$duplicated" ]; then
+              echo "❌ Duplicate Flyway migration version(s) found: $duplicated"
+              exit 1
+            fi
+            
+            echo "✅ No duplicate migration versions found."

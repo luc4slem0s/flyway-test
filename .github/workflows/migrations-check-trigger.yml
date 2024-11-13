@@ -1,0 +1,83 @@
+name: Re-run Migrations Check Workflow for Open PRs
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: write
+
+
+jobs:
+  rerun-migrations-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set up jq
+        run: |
+          sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Get list of open pull requests
+        id: get_prs
+        run: |
+          prs=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/pulls?state=open")
+          
+          # Check if the response is valid JSON
+          echo "$prs" | jq . > prs.json || { echo "Error: Invalid JSON response"; exit 1; }
+
+          # Save the list of PR numbers (or other necessary data) as a comma-separated list
+          pr_numbers=$(echo "$prs" | jq -r '.[].number' | paste -sd, -)
+          
+          # Write the PR numbers as an environment variable
+          echo "PR_NUMBERS=$pr_numbers" >> $GITHUB_ENV
+
+      - name: Loop through each PR and re-run migrations-check workflow
+        run: |
+          # Read PR numbers from environment variable
+          prs_data="${{ env.PR_NUMBERS }}"
+
+          if [ -z "$prs_data" ]; then
+            echo "No PR numbers found!"
+            exit 1
+          fi
+
+          # Loop over each PR number
+          for pr_number in $(echo $prs_data | tr "," "\n"); do
+              echo "Processing PR #$pr_number..."
+
+              # Get the commit SHA for the PR
+              pr_url="https://api.github.com/repos/${{ github.repository }}/pulls/$pr_number"
+
+              # Debugging: print the PR API response to check the full output
+              pr_response=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" "$pr_url")
+
+              # Extract commit SHA
+              pr_commit_sha=$(echo "$pr_response" | jq -r '.head.sha')
+              escaped_pr_commit_sha=$(printf "%q" "$pr_commit_sha")
+
+              # Check if commit SHA is null
+              if [ -z "$pr_commit_sha" ]; then
+                echo "Error: Commit SHA is null for PR #$pr_number"
+                continue
+              fi
+
+              echo "Commit SHA for PR #$pr_number is $pr_commit_sha"
+
+              # Get the workflow runs for the migrations-check.yml workflow, filtered by the pull request commit
+              workflow_runs_response=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/${{ github.repository }}/actions/workflows/migrations-check.yml/runs") || { echo "Error: Unable to fetch workflow runs"; exit 1; }
+              workflow_runs=$(echo "$workflow_runs_response" | jq -c ".workflow_runs[] | select(.head_sha==\"$escaped_pr_commit_sha\")")
+
+              # Find the latest run ID for the workflow
+              run_id=$(echo "$workflow_runs" | jq -r '.id' | head -n 1)
+
+              if [ -n "$run_id" ]; then
+                  echo "Re-running migrations-check.yml workflow for PR #$pr_number (Run ID: $run_id)..."
+                  curl -X POST -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/actions/runs/$run_id/rerun"
+              else
+                  echo "No previous migrations-check.yml run found for PR #$pr_number"
+              fi
+          done
