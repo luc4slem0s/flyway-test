@@ -40,11 +40,7 @@ jobs:
         working-directory: flyway/migrations
         run: |
             # Extract duplicated versions
-            migrations=$(ls | grep -Eo 'V[0-9]+' | sort)
-
-            echo "All migrations: $migrations"
-
-            duplicated=$(echo "$migrations" | uniq -d)
+            duplicated=$(ls | grep -Eo 'V[0-9]+' | uniq -d)
 
             if [ -n "$duplicated" ]; then
               echo "❌ Duplicate Flyway migration version(s) found: $duplicated"
