@@ -16,10 +16,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Set up jq
-        run: |
-          sudo apt-get update && sudo apt-get install -y jq
-
       - name: Get list of open pull requests
         id: get_prs
         run: |
